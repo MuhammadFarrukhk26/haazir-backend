@@ -7,7 +7,12 @@ const userSchema = new mongoose.Schema(
     phone: { type: String, required: true },
     passwordHash: { type: String, required: true },
     role: { type: String, enum: ['customer', 'worker'], default: 'customer' },
-    specialty: { type: String, default: null }, // worker-only
+    specialty: { 
+      type: Number, 
+      ref: 'Trade', 
+      default: null 
+    },
+    specialtyName: { type: String, default: null }, // worker-only
     rating: { type: Number, default: 5.0 },
     trips: { type: Number, default: 0 },
     avatar: { type: String, default: null },

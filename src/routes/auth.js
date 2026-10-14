@@ -2,6 +2,7 @@ const express = require('express');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
+const Trade = require('../models/Trade');
 
 const router = express.Router();
 
@@ -20,7 +21,8 @@ function sanitizeUser(user) {
     email: user.email,
     phone: user.phone,
     role: user.role,
-    specialty: user.specialty,
+    specialty: user.specialty,         // trade id (e.g. 2)
+    specialtyName: user.specialtyName, // trade name (e.g. "Plumber"), use this for display
     rating: user.rating,
     trips: user.trips,
     avatar: user.avatar,
@@ -41,14 +43,29 @@ router.post('/register', async (req, res) => {
       return res.status(409).json({ error: 'An account with this email already exists' });
     }
 
+    // Workers must pick a real trade. We save both its id and its name,
+    // so the app can show "Plumber" instead of "2".
+    const isWorker = role === 'worker';
+    let trade = null;
+    if (isWorker) {
+      const tradeId = Number(specialty);
+      trade = Number.isInteger(tradeId)
+        ? await Trade.findOne({ _id: tradeId, isActive: true })
+        : null;
+      if (!trade) {
+        return res.status(400).json({ error: 'Please choose a valid trade' });
+      }
+    }
+
     const passwordHash = await bcrypt.hash(password, 10);
     const user = await User.create({
       name,
       email: email.toLowerCase(),
       phone,
       passwordHash,
-      role: role === 'worker' ? 'worker' : 'customer',
-      specialty: role === 'worker' ? specialty || null : null,
+      role: isWorker ? 'worker' : 'customer',
+      specialty: trade ? trade._id : null,
+      specialtyName: trade ? trade.name : null,
     });
 
     const token = signToken(user);

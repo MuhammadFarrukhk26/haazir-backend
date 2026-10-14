@@ -10,6 +10,8 @@ const initSockets = require('./sockets');
 const authRoutes = require('./routes/auth');
 const bookingRoutes = require('./routes/bookings');
 const messageRoutes = require('./routes/messages');
+const tradeRoutes = require('./routes/trade');
+const servicesRoutes = require('./routes/servicecategory');
 
 const app = express();
 const server = http.createServer(app);
@@ -28,6 +30,8 @@ app.get('/health', (req, res) => res.json({ status: 'ok', time: new Date().toISO
 app.use('/api/auth', authRoutes);
 app.use('/api/bookings', bookingRoutes);
 app.use('/api/messages', messageRoutes);
+app.use('/api/trades', tradeRoutes);
+app.use('/api/service-categories', servicesRoutes);
 
 initSockets(io);
 
