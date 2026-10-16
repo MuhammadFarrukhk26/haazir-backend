@@ -37,7 +37,9 @@ router.post('/', async (req, res) => {
 
     // Notify every online worker in real time about the new job
     const io = req.app.get('io');
-    io.to('workers:online').emit('job:new', { booking: populated });
+    if (io) {
+      io.to('workers:online').emit('job:new', { booking: populated });
+    }
 
     res.status(201).json({ booking: populated });
   } catch (err) {
@@ -124,15 +126,24 @@ router.patch('/:id/accept', async (req, res) => {
       return res.status(409).json({ error: 'This job is no longer available' });
     }
 
+    // Safely increment worker trips without NaN crashes
     const worker = await User.findById(req.userId);
-    worker.trips += 1;
-    await worker.save();
+    if (worker) {
+      worker.trips = (worker.trips || 0) + 1;
+      await worker.save();
+    }
 
     const io = req.app.get('io');
-    // Tell the specific customer their booking was accepted
-    io.to(`user:${booking.customer._id}`).emit('booking:updated', { booking });
-    // Tell other workers this job is no longer available
-    io.to('workers:online').emit('job:taken', { bookingId: booking._id });
+    if (io) {
+      const customerId = booking.customer?._id
+        ? booking.customer._id.toString()
+        : booking.customer.toString();
+
+      // Tell the specific customer their booking was accepted
+      io.to(`user:${customerId}`).emit('booking:updated', { booking });
+      // Tell other workers this job is no longer available
+      io.to('workers:online').emit('job:taken', { bookingId: booking._id });
+    }
 
     res.json({ booking });
   } catch (err) {
@@ -169,9 +180,20 @@ router.patch('/:id/status', async (req, res) => {
     ]);
 
     const io = req.app.get('io');
-    io.to(`user:${booking.customer}`).emit('booking:updated', { booking: populated });
-    if (booking.worker) {
-      io.to(`user:${booking.worker}`).emit('booking:updated', { booking: populated });
+    if (io) {
+      const customerId = populated.customer?._id
+        ? populated.customer._id.toString()
+        : populated.customer.toString();
+
+      const workerId = populated.worker?._id
+        ? populated.worker._id.toString()
+        : populated.worker?.toString();
+
+      // Broadcast to both customer and worker user rooms
+      io.to(`user:${customerId}`).emit('booking:updated', { booking: populated });
+      if (workerId) {
+        io.to(`user:${workerId}`).emit('booking:updated', { booking: populated });
+      }
     }
 
     res.json({ booking: populated });

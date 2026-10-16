@@ -25,7 +25,8 @@ function initSockets(io) {
 
     // Every user gets a personal room so the server can target them directly
     // regardless of which device/app instance they're connected from.
-    socket.join(`user:${userId}`);
+    // socket.join(`user:${userId}`);
+    socket.join(`user:${socket.userId}`);
 
     try {
       await User.findByIdAndUpdate(userId, { socketId: socket.id });
