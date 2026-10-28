@@ -35,11 +35,20 @@ function initSockets(io) {
     }
 
     // Workers explicitly toggle availability; only "online" workers receive job broadcasts.
-    socket.on('worker:goOnline', async () => {
-      if (userRole !== 'worker') return;
-      socket.join('workers:online');
-      await User.findByIdAndUpdate(userId, { isOnline: true });
-      socket.emit('worker:status', { isOnline: true });
+    socket.on("worker:goOnline", async (coords) => {
+      if (userRole !== "worker") return;
+      socket.join("workers:online");
+      console.log('[goOnline]', userId, coords);
+      const update = { isOnline: true };
+      if (typeof coords?.lat === "number" && typeof coords?.lng === "number") {
+        update.location = {
+          type: "Point",
+          coordinates: [coords.lng, coords.lat],
+        }; // longitude first
+      }
+
+      await User.findByIdAndUpdate(userId, update);
+      socket.emit("worker:status", { isOnline: true });
     });
 
     socket.on('worker:goOffline', async () => {
@@ -47,6 +56,14 @@ function initSockets(io) {
       socket.leave('workers:online');
       await User.findByIdAndUpdate(userId, { isOnline: false });
       socket.emit('worker:status', { isOnline: false });
+    });
+    
+    socket.on("worker:location", async ({ lat, lng }) => {
+      if (userRole !== "worker") return;
+      if (typeof lat !== "number" || typeof lng !== "number") return;
+      await User.findByIdAndUpdate(userId, {
+        location: { type: "Point", coordinates: [lng, lat] },
+      });
     });
 
     // Real-time chat: persist then broadcast to both participants' personal rooms.

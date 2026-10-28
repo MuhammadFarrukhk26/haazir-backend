@@ -3,14 +3,20 @@ const mongoose = require('mongoose');
 const userSchema = new mongoose.Schema(
   {
     name: { type: String, required: true },
-    email: { type: String, required: true, unique: true, lowercase: true, trim: true },
+    email: {
+      type: String,
+      required: true,
+      unique: true,
+      lowercase: true,
+      trim: true,
+    },
     phone: { type: String, required: true },
     passwordHash: { type: String, required: true },
-    role: { type: String, enum: ['customer', 'worker'], default: 'customer' },
-    specialty: { 
-      type: Number, 
-      ref: 'Trade', 
-      default: null 
+    role: { type: String, enum: ["customer", "worker"], default: "customer" },
+    specialty: {
+      type: Number,
+      ref: "Trade",
+      default: null,
     },
     specialtyName: { type: String, default: null }, // worker-only
     rating: { type: Number, default: 5.0 },
@@ -18,8 +24,16 @@ const userSchema = new mongoose.Schema(
     avatar: { type: String, default: null },
     isOnline: { type: Boolean, default: false }, // worker availability toggle
     socketId: { type: String, default: null }, // current active socket connection, if any
+    role: { type: String, enum: ["customer", "worker"], required: true },
+    isOnline: { type: Boolean, default: false },
+    services: [{ type: String }], // e.g. ['plumbing', 'electrical'] or category ObjectIds
+    location: {
+      type: { type: String, enum: ["Point"] },
+      coordinates: { type: [Number], default: undefined }, // STRICTLY [longitude, latitude]
+    },
   },
-  { timestamps: true }
+  { timestamps: true },
 );
+userSchema.index({ location: '2dsphere' });
 
 module.exports = mongoose.model('User', userSchema);

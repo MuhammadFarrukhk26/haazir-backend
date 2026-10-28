@@ -2,6 +2,7 @@ const express = require('express');
 const Booking = require('../models/Booking');
 const User = require('../models/User');
 const authMiddleware = require('../middleware/auth');
+const { runRing, continueSearch } = require('../services/dispatch');
 
 const router = express.Router();
 router.use(authMiddleware);
@@ -13,38 +14,68 @@ const SERVICE_BASE_PRICE = {
   appliance: 20,
 };
 
+const escapeRegex = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
 // POST /api/bookings  — customer creates a new booking request
 router.post('/', async (req, res) => {
   try {
-    const { service, subService, description, address, location, slot } = req.body;
-    if (!service || !address) {
-      return res.status(400).json({ error: 'service and address are required' });
+    const {
+      service,
+      serviceCategory,
+      subService,
+      address,
+      description,
+      details,
+      lat,
+      lng,
+      slot,
+      schedule,
+    } = req.body;
+    console.log('[POST /bookings] body:', JSON.stringify(req.body));
+    // Validate coordinates
+    if (typeof lat !== 'number' || typeof lng !== 'number') {
+      return res.status(400).json({ error: 'Valid lat and lng coordinates are required.' });
     }
 
-    const booking = await Booking.create({
+    // Fallback logic so both 'service' or 'serviceCategory' work seamlessly
+    const activeService = service || serviceCategory;
+    const activeDescription = description || details || '';
+
+    if (!activeService) {
+      return res.status(400).json({ error: 'Service category is required.' });
+    }
+    if (!address) {
+      return res.status(400).json({ error: 'Address is required.' });
+    }
+
+    const booking = new Booking({
       customer: req.userId,
-      service,
-      subService,
-      description,
-      address,
-      location,
-      slot,
+      service: activeService,             // Fixes "Path service is required"
+      subService: subService || '',
+      address,                            // Fixes "Path address is required"
+      description: activeDescription,
+      slot: slot || 'now',
+      schedule,
+      location: {
+        type: 'Point',
+        coordinates: [Number(lng), Number(lat)], // GeoJSON: Longitude FIRST
+      },
       price: SERVICE_BASE_PRICE[service] || 15,
       status: 'pending',
     });
 
-    const populated = await booking.populate('customer', 'name phone avatar rating');
+    await booking.save();
 
-    // Notify every online worker in real time about the new job
+    // Start expanding ring dispatch algorithm
     const io = req.app.get('io');
     if (io) {
-      io.to('workers:online').emit('job:new', { booking: populated });
+      runRing(io, booking._id, 0);
     }
 
-    res.status(201).json({ booking: populated });
+    res.status(201).json(booking);
   } catch (err) {
-    console.error('[bookings/create]', err);
-    res.status(500).json({ error: 'Failed to create booking' });
+    console.error('[POST /bookings] Error:', err);
+    res.status(500).json({ error: err.message });
   }
 });
 
@@ -90,20 +121,39 @@ router.get('/history', async (req, res) => {
 });
 
 // GET /api/bookings/invites — open jobs available for a worker to accept
+// GET /api/bookings/invites — Fetch pending jobs matching worker trade & location
 router.get('/invites', async (req, res) => {
   try {
-    if (req.userRole !== 'worker') {
-      return res.status(403).json({ error: 'Only workers can view job invites' });
+    const worker = await User.findById(req.userId);
+    if (!worker || !worker.location?.coordinates) {
+      return res.json([]);
     }
-    const bookings = await Booking.find({ status: 'pending' })
-      .populate('customer', 'name phone avatar rating')
-      .sort({ createdAt: -1 })
-      .limit(20);
 
-    res.json({ bookings });
+    const invites = await Booking.aggregate([
+      {
+        $geoNear: {
+          near: worker.location,
+          distanceField: "distanceMeters",
+          spherical: true,
+          query: {
+            status: "pending",
+            service: {
+              $regex: `^${escapeRegex(worker.specialtyName)}$`,
+              $options: "i",
+            },
+          },
+        },
+      },
+      {
+        $match: {
+          $expr: { $lte: ["$distanceMeters", "$searchRadiusMeters"] },
+        },
+      },
+    ]);
+
+    res.json(invites);
   } catch (err) {
-    console.error('[bookings/invites]', err);
-    res.status(500).json({ error: 'Failed to fetch job invites' });
+    res.status(500).json({ error: err.message });
   }
 });
 
@@ -200,6 +250,20 @@ router.patch('/:id/status', async (req, res) => {
   } catch (err) {
     console.error('[bookings/status]', err);
     res.status(500).json({ error: 'Failed to update booking status' });
+  }
+});
+
+
+// PATCH /api/bookings/:id/continue
+router.patch('/:id/continue', async (req, res) => {
+  try {
+    const booking = await Booking.findOne({ _id: req.params.id, customer: req.userId });
+    if (!booking) return res.status(404).json({ error: 'Booking not found' });
+    const ok = await continueSearch(req.app.get('io'), booking._id);
+    if (!ok) return res.status(409).json({ error: 'Booking is no longer pending' });
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to continue search' });
   }
 });
 
