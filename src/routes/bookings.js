@@ -108,8 +108,10 @@ router.get('/history', async (req, res) => {
         : { worker: req.userId, status: { $in: ['completed', 'cancelled'] } };
 
     const bookings = await Booking.find(filter)
-      .populate('customer', 'name phone avatar')
-      .populate('worker', 'name phone avatar')
+      .populate("customer", "name phone avatar")
+      .populate("worker", "name phone avatar")
+      .populate("customer", "name phone avatar rating")
+      .populate("worker", "name phone avatar rating specialty")
       .sort({ createdAt: -1 })
       .limit(50);
 
