@@ -32,6 +32,17 @@ const bookingSchema = new mongoose.Schema(
     searchRadiusMeters: { type: Number, default: 0 },
     notifiedWorkers: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
     searchRound: { type: Number, default: 0 },
+    workerReview: {
+      rating: { type: Number, min: 1, max: 5 },
+      feedback: { type: String, default: '' },
+      ratedAt: { type: Date },
+    },
+    // Worker rates the customer
+    customerReview: {
+      rating: { type: Number, min: 1, max: 5 },
+      feedback: { type: String, default: '' },
+      ratedAt: { type: Date },
+    },
   },
   { timestamps: true }
 );

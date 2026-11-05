@@ -205,7 +205,7 @@ router.patch('/:id/accept', async (req, res) => {
 // PATCH /api/bookings/:id/status — advance booking status (in_progress, completed, cancelled)
 router.patch('/:id/status', async (req, res) => {
   try {
-    const { status } = req.body;
+    const { status, rating, feedback } = req.body;
     const allowed = ['in_progress', 'completed', 'cancelled'];
     if (!allowed.includes(status)) {
       return res.status(400).json({ error: `status must be one of: ${allowed.join(', ')}` });
@@ -219,6 +219,33 @@ router.patch('/:id/status', async (req, res) => {
       (booking.worker && booking.worker.toString() === req.userId);
     if (!isParticipant) {
       return res.status(403).json({ error: 'You are not part of this booking' });
+    }
+
+     const isCustomer = booking.customer.toString() === req.userId;
+    const isWorker = booking.worker && booking.worker.toString() === req.userId;
+    if (!isCustomer && !isWorker) {
+      return res.status(403).json({ error: 'You are not part of this booking' });
+    }
+
+    // Validate rating if provided
+    let ratingValue = null;
+    if (rating != null) {
+      ratingValue = Number(rating);
+      if (!Number.isInteger(ratingValue) || ratingValue < 1 || ratingValue > 5) {
+        return res.status(400).json({ error: 'rating must be an integer between 1 and 5' });
+      }
+    }
+
+    booking.status = status;
+
+    if (status === 'completed' && ratingValue !== null) {
+      const review = {
+        rating: ratingValue,
+        feedback: (feedback || '').trim(),
+        ratedAt: new Date(),
+      };
+      if (isCustomer) booking.workerReview = review;
+      else booking.customerReview = review;
     }
 
     booking.status = status;
