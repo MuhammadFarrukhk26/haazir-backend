@@ -1,50 +1,67 @@
-const mongoose = require('mongoose');
+const mongoose = require("mongoose");
 
 const bookingSchema = new mongoose.Schema(
   {
     customer: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: 'User',
+      ref: "User",
       required: true,
     },
     worker: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: 'User',
+      ref: "User",
       default: null,
     },
     service: { type: String, required: true }, // plumber, electrician, cctv, appliance
     serviceCategory: { type: String },
-    subService: { type: String, default: '' },
-    description: { type: String, default: '' },
+    subService: { type: String, default: "" },
+    description: { type: String, default: "" },
     address: { type: String, required: true },
     location: {
-      type: { type: String, enum: ['Point'], default: 'Point' },
+      type: { type: String, enum: ["Point"], default: "Point" },
       coordinates: { type: [Number], required: true }, // STRICTLY [longitude, latitude]
     },
-    slot: { type: String, default: 'now' },
+    slot: { type: String, default: "now" },
     schedule: { type: Object },
     price: { type: Number, default: 0 },
     status: {
       type: String,
-      enum: ['pending', 'assigned', 'in_progress', 'completed', 'cancelled', 'unfulfilled'],
-      default: 'pending',
+      enum: [
+        "pending",
+        "assigned",
+        "in_progress",
+        "completed",
+        "cancelled",
+        "unfulfilled",
+      ],
+      default: "pending",
     },
     searchRadiusMeters: { type: Number, default: 0 },
-    notifiedWorkers: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
+    notifiedWorkers: [{ type: mongoose.Schema.Types.ObjectId, ref: "User" }],
     searchRound: { type: Number, default: 0 },
     workerReview: {
       rating: { type: Number, min: 1, max: 5 },
-      feedback: { type: String, default: '' },
+      feedback: { type: String, default: "" },
       ratedAt: { type: Date },
     },
     // Worker rates the customer
     customerReview: {
       rating: { type: Number, min: 1, max: 5 },
-      feedback: { type: String, default: '' },
+      feedback: { type: String, default: "" },
       ratedAt: { type: Date },
     },
+    cancelledBy: {
+      type: String,
+      enum: ["customer", "worker", "admin"],
+      default: null,
+    },
+    cancelReason: { type: String, default: "" },
+    cancelledAt: { type: Date },
+    assignedAt: { type: Date },
+    startedAt: { type: Date },
+    completedAt: { type: Date },
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 
-module.exports = mongoose.model('Booking', bookingSchema);
+module.exports = mongoose.model("Booking", bookingSchema);

@@ -1,22 +1,27 @@
 const express = require('express');
 const Booking = require('../models/Booking');
 const User = require('../models/User');
+// const Trade = require('../models/Trade');
+const ServiceCategory = require('../models/ServiceCategory');
 const authMiddleware = require('../middleware/auth');
 const { runRing, continueSearch } = require('../services/dispatch');
 
 const router = express.Router();
 router.use(authMiddleware);
 
-const SERVICE_BASE_PRICE = {
-  electrician: 15,
-  plumber: 18,
-  cctv: 25,
-  appliance: 20,
-};
+const DEFAULT_PRICE = 250; // CHANGED: fallback only, real prices now live on Trade.basePrice
+
 
 const escapeRegex = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
-// POST /api/bookings  — customer creates a new booking request
+// CHANGED: allowed status moves (blocks things like cancelled -> completed)
+const TRANSITIONS = {
+  pending: ['cancelled'],
+  assigned: ['in_progress', 'cancelled'],
+  in_progress: ['completed', 'cancelled'],
+};
+
+// POST /api/bookings: customer creates a new booking request
 router.post('/', async (req, res) => {
   try {
     const {
@@ -31,13 +36,11 @@ router.post('/', async (req, res) => {
       slot,
       schedule,
     } = req.body;
-    console.log('[POST /bookings] body:', JSON.stringify(req.body));
-    // Validate coordinates
+
     if (typeof lat !== 'number' || typeof lng !== 'number') {
       return res.status(400).json({ error: 'Valid lat and lng coordinates are required.' });
     }
 
-    // Fallback logic so both 'service' or 'serviceCategory' work seamlessly
     const activeService = service || serviceCategory;
     const activeDescription = description || details || '';
 
@@ -48,25 +51,31 @@ router.post('/', async (req, res) => {
       return res.status(400).json({ error: 'Address is required.' });
     }
 
+    
+    const category = await ServiceCategory.findOne({
+      key: String(activeService).toLowerCase().trim(),
+    });
+
+    const price = category?.basePrice ?? DEFAULT_PRICE;
+
     const booking = new Booking({
       customer: req.userId,
-      service: activeService,             // Fixes "Path service is required"
+      service: activeService,
       subService: subService || '',
-      address,                            // Fixes "Path address is required"
+      address,
       description: activeDescription,
       slot: slot || 'now',
       schedule,
       location: {
         type: 'Point',
-        coordinates: [Number(lng), Number(lat)], // GeoJSON: Longitude FIRST
+        coordinates: [Number(lng), Number(lat)], // GeoJSON: longitude first
       },
-      price: SERVICE_BASE_PRICE[service] || 15,
+      price, // CHANGED
       status: 'pending',
     });
 
     await booking.save();
 
-    // Start expanding ring dispatch algorithm
     const io = req.app.get('io');
     if (io) {
       runRing(io, booking._id, 0);
@@ -79,7 +88,7 @@ router.post('/', async (req, res) => {
   }
 });
 
-// GET /api/bookings/active — current user's active (non-terminal) booking
+// GET /api/bookings/active
 router.get('/active', async (req, res) => {
   try {
     const filter =
@@ -99,7 +108,7 @@ router.get('/active', async (req, res) => {
   }
 });
 
-// GET /api/bookings/history — completed/cancelled bookings for current user
+// GET /api/bookings/history
 router.get('/history', async (req, res) => {
   try {
     const filter =
@@ -107,11 +116,10 @@ router.get('/history', async (req, res) => {
         ? { customer: req.userId, status: { $in: ['completed', 'cancelled'] } }
         : { worker: req.userId, status: { $in: ['completed', 'cancelled'] } };
 
+    // CHANGED: removed the duplicated populate() lines
     const bookings = await Booking.find(filter)
-      .populate("customer", "name phone avatar")
-      .populate("worker", "name phone avatar")
-      .populate("customer", "name phone avatar rating")
-      .populate("worker", "name phone avatar rating specialty")
+      .populate('customer', 'name phone avatar rating')
+      .populate('worker', 'name phone avatar rating specialty')
       .sort({ createdAt: -1 })
       .limit(50);
 
@@ -122,12 +130,18 @@ router.get('/history', async (req, res) => {
   }
 });
 
-// GET /api/bookings/invites — open jobs available for a worker to accept
-// GET /api/bookings/invites — Fetch pending jobs matching worker trade & location
+// GET /api/bookings/invites: pending jobs matching worker trade and location
 router.get('/invites', async (req, res) => {
   try {
     const worker = await User.findById(req.userId);
-    if (!worker || !worker.location?.coordinates) {
+    // CHANGED: also stops blocked/unverified workers and workers with no trade
+    if (
+      !worker ||
+      worker.isBlocked ||
+      worker.verificationStatus !== 'approved' ||
+      !worker.location?.coordinates ||
+      !worker.specialtyName
+    ) {
       return res.json([]);
     }
 
@@ -135,20 +149,20 @@ router.get('/invites', async (req, res) => {
       {
         $geoNear: {
           near: worker.location,
-          distanceField: "distanceMeters",
+          distanceField: 'distanceMeters',
           spherical: true,
           query: {
-            status: "pending",
+            status: 'pending',
             service: {
               $regex: `^${escapeRegex(worker.specialtyName)}$`,
-              $options: "i",
+              $options: 'i',
             },
           },
         },
       },
       {
         $match: {
-          $expr: { $lte: ["$distanceMeters", "$searchRadiusMeters"] },
+          $expr: { $lte: ['$distanceMeters', '$searchRadiusMeters'] },
         },
       },
     ]);
@@ -159,16 +173,25 @@ router.get('/invites', async (req, res) => {
   }
 });
 
-// PATCH /api/bookings/:id/accept — worker accepts a pending job
+// PATCH /api/bookings/:id/accept
 router.patch('/:id/accept', async (req, res) => {
   try {
     if (req.userRole !== 'worker') {
       return res.status(403).json({ error: 'Only workers can accept jobs' });
     }
 
+    // CHANGED: blocked / unverified workers cannot accept
+    const me = await User.findById(req.userId).select('isBlocked verificationStatus');
+    if (!me || me.isBlocked) {
+      return res.status(403).json({ error: 'Your account has been suspended' });
+    }
+    if (me.verificationStatus !== 'approved') {
+      return res.status(403).json({ error: 'Your account is pending verification' });
+    }
+
     const booking = await Booking.findOneAndUpdate(
       { _id: req.params.id, status: 'pending' },
-      { worker: req.userId, status: 'assigned' },
+      { worker: req.userId, status: 'assigned', assignedAt: new Date() }, // CHANGED: assignedAt
       { new: true }
     )
       .populate('customer', 'name phone avatar rating')
@@ -178,12 +201,8 @@ router.patch('/:id/accept', async (req, res) => {
       return res.status(409).json({ error: 'This job is no longer available' });
     }
 
-    // Safely increment worker trips without NaN crashes
-    const worker = await User.findById(req.userId);
-    if (worker) {
-      worker.trips = (worker.trips || 0) + 1;
-      await worker.save();
-    }
+    // CHANGED: atomic increment instead of load + save
+    await User.updateOne({ _id: req.userId }, { $inc: { trips: 1 } });
 
     const io = req.app.get('io');
     if (io) {
@@ -191,9 +210,7 @@ router.patch('/:id/accept', async (req, res) => {
         ? booking.customer._id.toString()
         : booking.customer.toString();
 
-      // Tell the specific customer their booking was accepted
       io.to(`user:${customerId}`).emit('booking:updated', { booking });
-      // Tell other workers this job is no longer available
       io.to('workers:online').emit('job:taken', { bookingId: booking._id });
     }
 
@@ -204,10 +221,10 @@ router.patch('/:id/accept', async (req, res) => {
   }
 });
 
-// PATCH /api/bookings/:id/status — advance booking status (in_progress, completed, cancelled)
+// PATCH /api/bookings/:id/status: in_progress, completed, cancelled
 router.patch('/:id/status', async (req, res) => {
   try {
-    const { status, rating, feedback } = req.body;
+    const { status, rating, feedback, reason } = req.body;
     const allowed = ['in_progress', 'completed', 'cancelled'];
     if (!allowed.includes(status)) {
       return res.status(400).json({ error: `status must be one of: ${allowed.join(', ')}` });
@@ -216,20 +233,13 @@ router.patch('/:id/status', async (req, res) => {
     const booking = await Booking.findById(req.params.id);
     if (!booking) return res.status(404).json({ error: 'Booking not found' });
 
-    const isParticipant =
-      booking.customer.toString() === req.userId ||
-      (booking.worker && booking.worker.toString() === req.userId);
-    if (!isParticipant) {
-      return res.status(403).json({ error: 'You are not part of this booking' });
-    }
-
-     const isCustomer = booking.customer.toString() === req.userId;
+    // CHANGED: one participant check instead of two
+    const isCustomer = booking.customer.toString() === req.userId;
     const isWorker = booking.worker && booking.worker.toString() === req.userId;
     if (!isCustomer && !isWorker) {
       return res.status(403).json({ error: 'You are not part of this booking' });
     }
 
-    // Validate rating if provided
     let ratingValue = null;
     if (rating != null) {
       ratingValue = Number(rating);
@@ -238,7 +248,29 @@ router.patch('/:id/status', async (req, res) => {
       }
     }
 
-    booking.status = status;
+    // CHANGED: transition guard (a repeated 'completed' is allowed only to submit a review)
+    const isReviewOnly =
+      booking.status === 'completed' && status === 'completed' && ratingValue !== null;
+    if (!isReviewOnly && !TRANSITIONS[booking.status]?.includes(status)) {
+      return res
+        .status(409)
+        .json({ error: `Cannot change a ${booking.status} booking to ${status}` });
+    }
+
+    const wasPending = booking.status === 'pending';
+
+    // CHANGED: timestamps and cancel tracking
+    if (!isReviewOnly) {
+      booking.status = status;
+      const now = new Date();
+      if (status === 'in_progress') booking.startedAt = now;
+      if (status === 'completed') booking.completedAt = now;
+      if (status === 'cancelled') {
+        booking.cancelledAt = now;
+        booking.cancelledBy = isCustomer ? 'customer' : 'worker';
+        booking.cancelReason = (reason || '').trim();
+      }
+    }
 
     if (status === 'completed' && ratingValue !== null) {
       const review = {
@@ -250,7 +282,6 @@ router.patch('/:id/status', async (req, res) => {
       else booking.customerReview = review;
     }
 
-    booking.status = status;
     await booking.save();
 
     const populated = await booking.populate([
@@ -268,10 +299,14 @@ router.patch('/:id/status', async (req, res) => {
         ? populated.worker._id.toString()
         : populated.worker?.toString();
 
-      // Broadcast to both customer and worker user rooms
       io.to(`user:${customerId}`).emit('booking:updated', { booking: populated });
       if (workerId) {
         io.to(`user:${workerId}`).emit('booking:updated', { booking: populated });
+      }
+
+      // CHANGED: if a still-searching booking is cancelled, tell workers to drop the card
+      if (wasPending && status === 'cancelled') {
+        io.to('workers:online').emit('job:taken', { bookingId: booking._id });
       }
     }
 
@@ -281,7 +316,6 @@ router.patch('/:id/status', async (req, res) => {
     res.status(500).json({ error: 'Failed to update booking status' });
   }
 });
-
 
 // PATCH /api/bookings/:id/continue
 router.patch('/:id/continue', async (req, res) => {

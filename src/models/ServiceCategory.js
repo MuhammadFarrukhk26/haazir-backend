@@ -13,6 +13,7 @@ const serviceCategorySchema = new mongoose.Schema(
     issues: { type: [String], default: [] },          // quick-pick common issues
     sortOrder: { type: Number, default: 0 },
     isActive: { type: Boolean, default: true },
+    basePrice: { type: Number, default: 250, min: 0 },
   },
   { timestamps: true },
 );

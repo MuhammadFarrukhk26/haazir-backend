@@ -24,6 +24,8 @@ async function runRing(io, bookingId, step = 0) {
         query: {
           role: "worker",
           isOnline: true,
+          isBlocked: { $ne: true },
+          verificationStatus: "approved",
           specialtyName: {
             $regex: `^${escapeRegex(booking.service)}$`,
             $options: "i",

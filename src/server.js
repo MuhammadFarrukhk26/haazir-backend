@@ -12,6 +12,7 @@ const bookingRoutes = require('./routes/bookings');
 const messageRoutes = require('./routes/messages');
 const tradeRoutes = require('./routes/trade');
 const servicesRoutes = require('./routes/servicecategory');
+const adminRoutes = require('./routes/admin')
 
 const app = express();
 const server = http.createServer(app);
@@ -32,6 +33,8 @@ app.use('/api/bookings', bookingRoutes);
 app.use('/api/messages', messageRoutes);
 app.use('/api/trades', tradeRoutes);
 app.use('/api/service-categories', servicesRoutes);
+
+app.use('/api/admin', adminRoutes);
 
 initSockets(io);
 
