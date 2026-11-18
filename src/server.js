@@ -11,7 +11,7 @@ const authRoutes = require('./routes/auth');
 const bookingRoutes = require('./routes/bookings');
 const messageRoutes = require('./routes/messages');
 const tradeRoutes = require('./routes/trade');
-const servicesRoutes = require('./routes/servicecategory');
+const servicesRoutes = require('./routes/serviceCategory');
 const adminRoutes = require('./routes/admin')
 
 const app = express();
