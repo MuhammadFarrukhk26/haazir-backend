@@ -40,13 +40,20 @@ initSockets(io);
 
 const PORT = process.env.PORT || 4000;
 
-connectDB()
-  .then(() => {
-    server.listen(PORT, '0.0.0.0', () => {
-      console.log(`[server] Haazir backend listening on port ${PORT}`);
-    });
-  })
-  .catch((err) => {
-    console.error('[server] Failed to connect to MongoDB, exiting.', err);
+async function startServer() {
+  await connectDB();
+  server.listen(PORT, '0.0.0.0', () => {
+    console.log(`[server] Haazir backend listening on port ${PORT}`);
+  });
+}
+
+if (require.main === module) {
+  startServer().catch((err) => {
+    console.error('[server] Failed to start server.', err);
     process.exit(1);
   });
+}
+
+module.exports = app;
+module.exports.app = app;
+module.exports.server = server;
